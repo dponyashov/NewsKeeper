@@ -1,0 +1,5 @@
+.env
+.mvn
+var
+news-keeper-back/mvnw
+news-keeper-back/mvnw.cmd
