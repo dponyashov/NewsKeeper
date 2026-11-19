@@ -60,7 +60,7 @@ export const parseJwt = (token: string | null): JwtPayload | null => {
       return null;
     }
 
-    console.log("JWT успешно распознан:", payload);
+    // console.log("JWT успешно распознан:", payload);
     return payload;
   } catch (e) {
     console.error("Ошибка парсинга JWT:", e);

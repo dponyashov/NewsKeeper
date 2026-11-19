@@ -18,9 +18,7 @@ export function App() {
       setIsAuthorized(true);
       const canEdit = payload.roles?.includes("ROLE_NEWSMAKER") ?? false;
       setIsNewsmaker(canEdit);
-      if (canEdit) {
-        setActiveTab("editor");
-      }
+      // Всегда оставляем activeTab = 'viewer' при первоначальной загрузке
     } else {
       setIsAuthorized(false);
     }
@@ -56,16 +54,6 @@ export function App() {
         <nav className="app-nav">
           <button
             type="button"
-            className={`app-nav-btn ${activeTab === "editor" && editingNewsId === null ? "active" : ""}`}
-            onClick={() => {
-              setEditingNewsId(null);
-              setActiveTab("editor");
-            }}
-          >
-            ✍️ Создать новость
-          </button>
-          <button
-            type="button"
             className={`app-nav-btn ${activeTab === "viewer" ? "active" : ""}`}
             onClick={() => {
               setEditingNewsId(null);
@@ -73,6 +61,16 @@ export function App() {
             }}
           >
             📰 Лента новостей
+          </button>
+          <button
+            type="button"
+            className={`app-nav-btn ${activeTab === "editor" && editingNewsId === null ? "active" : ""}`}
+            onClick={() => {
+              setEditingNewsId(null);
+              setActiveTab("editor");
+            }}
+          >
+            ✍️ Создать новость
           </button>
         </nav>
       )}
