@@ -1,0 +1,74 @@
+version: "3.8"
+
+services:
+  db-news:
+    image: postgres:17-alpine
+    container_name: news-db
+    restart: unless-stopped
+    ports:
+      - "${DB_NEWS_PORT}:5432"
+    environment:
+      POSTGRES_DB: ${DB_NEWS_NAME}
+      POSTGRES_USER: ${DB_NEWS_USER}
+      POSTGRES_PASSWORD: ${DB_NEWS_PASSWORD}
+    volumes:
+      - ./var/db/postgresql:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_NEWS_USER} -d ${DB_NEWS_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  s3-news:
+    image: chrislusf/seaweedfs:latest
+    container_name: news-s3
+    restart: unless-stopped
+    # Секция ports удалена — S3 больше не торчит наружу!
+    # ports:
+    #   - "${S3_PORT}:8333"
+    command: "server -s3 -s3.port=8333 -dir=/data"
+    volumes:
+      - ./var/s3/data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8333/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  news-backend:
+    image: newskeeper-news-backend
+    container_name: news-back
+    restart: unless-stopped
+    depends_on:
+      db-news:
+        condition: service_healthy
+      s3-news:
+        condition: service_started
+    ports:
+      - "${NEWS_BACK_PORT}:${NEWS_BACK_PORT}"
+    environment:
+      NEWS_SERVER_PORT: "${NEWS_BACK_PORT}"
+      DB_NEWS_URL: jdbc:postgresql://db-news:5432/${DB_NEWS_NAME}
+      DB_NEWS_USER: ${DB_NEWS_USER}
+      DB_NEWS_PASSWORD: ${DB_NEWS_PASSWORD}
+      NODE_ENV: ${NODE_ENV}
+      FRONT_URL: ${FRONT_URL}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRATION: ${JWT_ACCESS_EXPIRATION}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION}
+
+  news-frontend:
+    image: newskeeper-news-frontend
+    container_name: news-front
+    restart: unless-stopped
+    depends_on:
+      - news-backend
+    ports:
+      - "${NEWS_FRONT_PORT}:80"
