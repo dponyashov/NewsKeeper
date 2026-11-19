@@ -21,8 +21,9 @@ services:
     image: chrislusf/seaweedfs:latest
     container_name: news-s3
     restart: unless-stopped
-    ports:
-      - "${S3_PORT}:8333"
+    # Секция ports удалена — S3 больше не торчит наружу!
+    # ports:
+    #   - "${S3_PORT}:8333"
     command: "server -s3 -s3.port=8333 -dir=/data"
     volumes:
       - ./var/s3/data:/data

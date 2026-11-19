@@ -1,16 +1,16 @@
 # AI Context: NewsKeeper (Fullstack News Platform)
 
-Этот документ содержит актуальный архитектурный контекст, технические решения и правила разработки проекта **NewsKeeper** для быстрого погружения ИИ-ассистента в новых сессиях.
+Этот документ содержит актуальный архитектурный контекст, технические соглашения и структуру проекта **NewsKeeper** для быстрого погружения ИИ-ассистента в новых сессиях.
 
 ---
 
 ## 1. Технологический стек и инфраструктура
 
-- **База данных:** PostgreSQL 17 (`postgres:17-alpine`), хранение структуры статей в колонке типа `jsonb`.
-- **Объектное хранилище (S3):** SeaweedFS (`chrislusf/seaweedfs:latest`), S3 API на внутреннем порту `8333` (проброшен на `9000` хоста).
+- **База данных и миграции:** PostgreSQL 17 (`postgres:17-alpine`), версионность схемы через **Flyway** (`spring-boot-starter-flyway` + `flyway-database-postgresql`), валидация схемы Hibernate (`ddl-auto: validate`).
+- **Объектное хранилище (S3):** SeaweedFS (`chrislusf/seaweedfs:latest`), S3 API на внутреннем порту `8333`.
 - **Бэкенд:** Java 21+, Spring Boot 4.1 (Spring Web, Spring Data JPA / Hibernate 7, Spring Security, Validation, Lombok, AWS SDK for Java v2 `2.29.0`, JJWT `0.12.6`).
-- **Фронтенд:** React 19, TypeScript, Vite с **React Compiler**, редактор **TipTap** (`@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extension-text-align`, `@tiptap/html`), раздача статики в продакшене через **Nginx**.
-- **Оркестрация:** Docker и Docker Compose (папка `/docker` для Dockerfile-ов).
+- **Фронтенд:** React 19, TypeScript, Vite с **React Compiler**, WYSIWYG-редактор **TipTap** (`@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extension-text-align`, `@tiptap/extension-link`, `@tiptap/extension-table`, `@tiptap/html`).
+- **Единый шлюз и оркестрация:** Nginx (раздача SPA + reverse-proxy для `/api/` и `/news-media/`), Docker и Docker Compose (Dockerfile-ы вынесены в папку `/docker`).
 
 ---
 
@@ -19,53 +19,49 @@
 ### Работа с JSON и Hibernate 7 / Spring Boot 4
 
 - **Тип поля контента:** В DTO (`NewsRequestDto`, `NewsResponseDto`) и в Entity (`NewsEntity`) поле `content` типизировано как **`Map<String, Object>`** с аннотацией `@JdbcTypeCode(SqlTypes.JSON)` и `@Column(columnDefinition = "jsonb")`.
-- **Причина:** В Spring Boot 4 используется Jackson 3 (`tools.jackson.*`), а в Hibernate 7 — маппер на базе Jackson 2 (`com.fasterxml.jackson.*`). Использование `Map<String, Object>` полностью исключает конфликты десериализации `JsonNode`.
-- **Auditing / Даты:** В сущностях `NewsEntity` и `MediaFileEntity` поле `createdAt` инициализируется через `@PrePersist`, чтобы избежать нарушений `NOT NULL` при вставке.
+- **Причина:** В Spring Boot 4 используется Jackson 3 (`tools.jackson.*`), а в Hibernate 7 — маппер на базе Jackson 2 (`com.fasterxml.jackson.*`). Использование `Map<String, Object>` исключает конфликты десериализации `JsonNode`.
+- **Даты создания:** В сущностях `NewsEntity` и `MediaFileEntity` поле `createdAt` инициализируется через `@PrePersist`.
+
+### Миграции базы данных (Flyway)
+
+- Миграции лежат в `news-keeper-back/src/main/resources/db/migration/` (`V1__init_schema.sql` и далее).
+- В `application.yaml` включено `baseline-on-migrate: true` (для совместимости с существующей БД) и `spring.jpa.hibernate.ddl-auto: validate`.
+- Для ускорения поиска `ILIKE` используется расширение PostgreSQL `pg_trgm` и GIN-индекс на колонку `title`.
 
 ### Жизненный цикл медиафайлов (S3 / SeaweedFS)
 
-- Все загружаемые изображения (обложки и вставки внутри текста) регистрируются в таблице `t_media_files` со статусами `PENDING` или `ATTACHED`.
+- Все загружаемые изображения регистрируются в таблице `t_media_files` со статусами `PENDING` или `ATTACHED`.
 - При загрузке картинки внутрь редактора (`POST /api/v1/media/upload`) файл получает статус `PENDING`.
-- При сохранении (`POST /api/v1/news`) или обновлении (`PUT /api/v1/news/{id}`) новости сервер рекурсивно обходит дерево `content`, собирает все активные ссылки `src` + `coverUrl` и переводит их в статус `ATTACHED` (привязывая `newsId`). Удаленные из статьи картинки и старые обложки переводятся обратно в `PENDING`.
+- При сохранении (`POST /api/v1/news`) или обновлении (`PUT /api/v1/news/{id}`) новости сервер рекурсивно обходит дерево `content`, собирает активные ссылки `src` + `coverUrl` и переводит их в статус `ATTACHED` (привязывая `newsId`). Удаленные из статьи картинки и старые обложки переводятся обратно в `PENDING`.
 - При удалении новости (`DELETE /api/v1/news/{id}`) все её файлы переводятся в `PENDING`.
-- Фоновая задача `OrphanMediaCleanupJob` (`@Scheduled(cron = "0 0 3 * * *")`) ежедневно в 03:00 удаляет из S3 и БД файлы в статусе `PENDING`, созданные более 24 часов назад.
-- **Разделение S3 URL в Docker:** Бэкенд подключается к S3 по внутреннему имени сервиса `S3_ENDPOINT` (`http://s3-news:8333`), но сохраняет в БД и отдает клиенту публичный адрес `S3_PUBLIC_ENDPOINT` (`http://localhost:9000`). Имя сервиса S3 в Docker обязательно использует дефис (`s3-news`), так как символ `_` вызывает `URISyntaxException` в AWS SDK.
+- Фоновая задача `OrphanMediaCleanupJob` (`@Scheduled(cron = "0 0 3 * * *")`) ежедневно в 03:00 удаляет из S3 и БД файлы в статусе `PENDING` старше 24 часов.
+- **Сетевое взаимодействие S3:** Бэкенд подключается к S3 по внутреннему Docker-имени `http://s3-news:8333` (имя сервиса обязательно с дефисом, т.к. символ `_` вызывает `URISyntaxException` в AWS SDK). При пустом `S3_PUBLIC_ENDPOINT` в БД сохраняются относительные пути `/news-media/uuid.jpg`, которые проксируются через Nginx.
 
-### Типографика и разметка контента (WYSIWYG)
+### Типографика, расширения TipTap и стили фронтенда
 
-- Вместо произвольных CSS-стилей в JSON хранятся семантические варианты абзацев через кастомное расширение `CustomParagraph` (атрибут `variant`: `'default' | 'lead' | 'callout'`).
-- Стили классов `.news-p-default`, `.news-p-lead`, `.news-p-callout` и `.news-inline-image` описаны в `NewsEditor.css` и переиспользуются как внутри редактора TipTap, так и при рендеринге статьи для читателя через `generateHTML` из `@tiptap/html`.
-- **Правило стилей на фронтенде:** Инлайн-стили (`style={{ ... }}`) запрещены — все стили выносятся в отдельные `.css` файлы.
+- Общий набор расширений TipTap вынесен в `src/extensions/tiptapExtensions.ts` (`CustomParagraph` с вариантами `'default' | 'lead' | 'callout'`, `Image`, `TextAlign`, `Link`, `Table`, списки, цитаты) и переиспользуется как в редакторе (`useNewsEditor`), так и при рендеринге статьи через `generateHTML` (`NewsDetailView`).
+- **Правило стилей:** Инлайн-стили (`style={{ ... }}`) запрещены — все стили вынесены в отдельные `.css` файлы.
 
 ---
 
 ## 3. Безопасность и ролевая модель (JWT)
 
-- Приложение работает в режиме `SessionCreationPolicy.STATELESS` без локальной регистрации и без дефолтного пользователя Spring Security (`UserDetailsServiceAutoConfiguration` исключена в `application.yaml`).
-- Внешний сервис авторизации передает JWT-токен (алгоритм `HS256`, ключ `app.variables.jwt.at-secret-key` с обязательным `.trim()`).
-- **Ролевая модель:**
-  - Наличие валидного JWT-токена обязательно для доступа к приложению и чтения новостей (`GET /api/v1/news/**`). При отсутствии или просрочке токена возвращается `401 Unauthorized`.
+- Приложение работает в режиме `SessionCreationPolicy.STATELESS` без локальной аутентификации (`UserDetailsServiceAutoConfiguration` исключена в `application.yaml`).
+- Внешний сервис авторизации передает JWT-токен (`HS256`, ключ `app.variables.jwt.at-secret-key` с обязательным `.trim()`).
+- **Роли:**
+  - Наличие валидного JWT обязательно для входа и чтения новостей (`GET /api/v1/news/**`). При отсутствии или просрочке токена возвращается `401 Unauthorized`.
   - Роль **`ROLE_NEWSMAKER`** (проверяется в claim `roles` на фронтенде и через `.hasRole("NEWSMAKER")` на бэкенде) открывает доступ к созданию, редактированию, удалению новостей и загрузке файлов (`POST/PUT/DELETE /api/v1/news/**`, `/api/v1/media/**`).
-  - Пользователи без `ROLE_NEWSMAKER` видят только ленту новостей и детальные страницы статей.
-- На фронтенде токен считывается из query-параметра `?token=...` (с последующей очисткой URL), `localStorage` (`news_keeper_token`) или в dev-режиме из `.env.local` (`VITE_DEV_JWT_TOKEN`). Все запросы выполняются через обертку `authFetch` (`src/utils/api.ts`).
-- Для генерации тестовых токенов на бэкенде используется JUnit-тест `JwtGeneratorTest`.
+- На фронтенде токен считывается из URL (`?token=...` с очисткой адресной строки), `localStorage` (`news_keeper_token`) или в dev-режиме из `.env.local` (`VITE_DEV_JWT_TOKEN`). Все запросы идут через обертку `authFetch` (`src/utils/api.ts`).
 
 ---
 
-## 4. Схема БД и спецификация REST API (`/api/v1`)
+## 4. Спецификация REST API (`/api/v1`)
 
-### Таблицы PostgreSQL
-
-- **`t_news`**: `id` (BIGSERIAL PK), `title` (VARCHAR), `cover_url` (VARCHAR), `content` (JSONB), `created_at` (TIMESTAMP).
-- **`t_media_files`**: `id` (UUID PK), `url` (VARCHAR UNIQUE), `s3_key` (VARCHAR), `status` (VARCHAR: `PENDING`/`ATTACHED`), `news_id` (BIGINT FK -> `t_news(id)` ON DELETE SET NULL), `created_at` (TIMESTAMP).
-
-### Эндпоинты
-
-- `GET /api/v1/news?search={query}&page={0}&size={5}` — постраничный список новостей (`PageResponseDto<NewsResponseDto>`) с регистронезависимым поиском (`ILIKE`) по заголовку и тексту внутри `jsonb`. Поле `content` в элементах списка возвращается как `null` для экономии трафика.
-- `GET /api/v1/news/{id}` — полная информация о новости (`NewsResponseDto`), включая дерево `content`.
-- `POST /api/v1/media/upload` (`multipart/form-data`, параметр `file`) — загрузка картинки в S3 (доступно только `ROLE_NEWSMAKER`), возвращает `{"url": "..."}`.
-- `POST /api/v1/news` (`multipart/form-data`: часть `news` как `application/json` с `NewsRequestDto` + опциональный файл `file` для обложки) — создание новости (`ROLE_NEWSMAKER`).
-- `PUT /api/v1/news/{id}?removeCover={boolean}` (`multipart/form-data`: часть `news` + опциональный `file`) — редактирование новости и управление обложкой (`ROLE_NEWSMAKER`).
+- `GET /api/v1/news?search={query}&page={0}&size={5}` — постраничный список новостей (`PageResponseDto<NewsResponseDto>`) с регистронезависимым поиском (`ILIKE`) по заголовку и тексту внутри `jsonb`. Поле `content` в списке возвращается как `null`.
+- `GET /api/v1/news/{id}` — полная информация о новости (`NewsResponseDto`), включая `content`.
+- `POST /api/v1/media/upload` (`multipart/form-data`, параметр `file`) — загрузка картинки в S3 (`ROLE_NEWSMAKER`), возвращает `{"url": "/news-media/..."}`.
+- `POST /api/v1/news` (`multipart/form-data`: `news` как `application/json` с `NewsRequestDto` + опциональный `file` для обложки) — создание новости (`ROLE_NEWSMAKER`).
+- `PUT /api/v1/news/{id}?removeCover={boolean}` (`multipart/form-data`: `news` + опциональный `file`) — редактирование новости и управление обложкой (`ROLE_NEWSMAKER`).
 - `DELETE /api/v1/news/{id}` — удаление новости и перевод её медиафайлов в `PENDING` (`ROLE_NEWSMAKER`).
 
 ---
@@ -75,6 +71,7 @@
 ```text
 NewsKeeper/
 ├── ai_context.md
+├── README.md
 ├── docker-compose.yml
 ├── .env
 ├── docker/
@@ -84,39 +81,41 @@ NewsKeeper/
 │       └── Dockerfile
 ├── news-keeper-back/
 │   ├── pom.xml
-│   └── src/main/
-│       ├── java/com/dponyashov/news_keeper_back/
-│       │   ├── config/          # AppConfig (record), S3Config, SecurityConfig
-│       │   ├── controller/      # NewsController
-│       │   ├── dto/             # NewsRequestDto, NewsResponseDto, PageResponseDto
-│       │   ├── entity/          # NewsEntity, MediaFileEntity, MediaStatus
-│       │   ├── job/             # OrphanMediaCleanupJob
-│       │   ├── repository/      # NewsRepository, MediaFileRepository
-│       │   ├── security/        # JwtAuthenticationFilter
-│       │   └── service/         # NewsService, MediaStorageService, JwtService
-│       └── resources/
-│           └── application.yaml
+│   └── src/
+│       ├── main/
+│       │   ├── java/com/dponyashov/news_keeper_back/
+│       │   │   ├── config/          # AppConfig (record), S3Config, SecurityConfig
+│       │   │   ├── controller/      # NewsController
+│       │   │   ├── dto/             # NewsRequestDto, NewsResponseDto, PageResponseDto
+│       │   │   ├── entity/          # NewsEntity, MediaFileEntity, MediaStatus
+│       │   │   ├── job/             # OrphanMediaCleanupJob
+│       │   │   ├── repository/      # NewsRepository, MediaFileRepository
+│       │   │   ├── security/        # JwtAuthenticationFilter
+│       │   │   └── service/         # NewsService, MediaStorageService, JwtService
+│       │   └── resources/
+│       │       ├── application.yaml
+│       │       └── db/migration/    # Flyway SQL-миграции (V1__init_schema.sql)
+│       └── test/                    # JwtGeneratorTest
 └── news-keeper-front/
-    ├── nginx.conf
+    ├── nginx.conf                   # Единый reverse-proxy для SPA, /api/ и /news-media/
     ├── package.json
     └── src/
         ├── config/apiConfig.ts
         ├── types/news.ts
         ├── utils/
-        │   ├── api.ts           # authFetch
-        │   └── auth.ts          # initAndGetToken, parseJwt, hasNewsmakerRole
+        │   ├── api.ts               # authFetch
+        │   └── auth.ts              # initAndGetToken, parseJwt, hasNewsmakerRole
         ├── extensions/
-        │   └── CustomParagraph.ts
+        │   ├── CustomParagraph.ts
+        │   └── tiptapExtensions.ts
         ├── hooks/
         │   └── useNewsEditor.ts
         ├── components/
-        │   ├── editor/          # NewsEditor, EditorToolbar, CoverUploader, NewsEditor.css
-        │   └── viewer/          # NewsViewer, NewsList, NewsCard, NewsDetailView, Pagination, NewsViewer.css
+        │   ├── editor/              # NewsEditor, EditorToolbar, CoverUploader, NewsEditor.css
+        │   └── viewer/              # NewsViewer, NewsList, NewsCard, NewsDetailView, Pagination, NewsViewer.css
         ├── App.tsx
         └── App.css
 ```
-
----
 
 ## 6. Команды запуска и конфигурации
 

@@ -1,12 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { generateHTML } from "@tiptap/html";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import TextAlign from "@tiptap/extension-text-align";
-import { CustomParagraph } from "../../extensions/CustomParagraph";
 import { type NewsDto } from "../../types/news";
 import { authFetch } from "../../utils/api";
 import { API_BASE_URL } from "../../config/apiConfig";
+import { getSharedTipTapExtensions } from "../../extensions/tiptapExtensions";
 
 interface NewsDetailViewProps {
   newsId: number;
@@ -35,18 +32,7 @@ export const NewsDetailView: React.FC<NewsDetailViewProps> = ({
 
   const contentHtml = useMemo(() => {
     if (!news?.content) return "";
-    return generateHTML(news.content, [
-      StarterKit.configure({ paragraph: false }),
-      CustomParagraph,
-      Image.configure({
-        HTMLAttributes: {
-          class: "news-inline-image",
-        },
-      }),
-      TextAlign.configure({
-        types: ["heading", "paragraph"],
-      }),
-    ]);
+    return generateHTML(news.content, getSharedTipTapExtensions());
   }, [news]);
 
   const handleDelete = async () => {

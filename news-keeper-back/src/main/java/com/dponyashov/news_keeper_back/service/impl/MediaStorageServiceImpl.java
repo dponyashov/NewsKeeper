@@ -76,10 +76,20 @@ public class MediaStorageServiceImpl implements MediaStorageService {
             throw new RuntimeException("Ошибка при загрузке файла в S3", e);
         }
 
-        String baseUrl = (appConfig.s3().publicEndpoint() != null && !appConfig.s3().publicEndpoint().isBlank())
-                ? appConfig.s3().publicEndpoint()
-                : appConfig.s3().endpoint();
-        String publicUrl = String.format("%s/%s/%s", baseUrl, appConfig.s3().bucket(), s3Key);
+//        String baseUrl = (appConfig.s3().publicEndpoint() != null && !appConfig.s3().publicEndpoint().isBlank())
+//                ? appConfig.s3().publicEndpoint()
+//                : appConfig.s3().endpoint();
+//        String publicUrl = String.format("%s/%s/%s", baseUrl, appConfig.s3().bucket(), s3Key);
+        String publicEndpoint = appConfig.s3().publicEndpoint();
+        String publicUrl;
+
+        if (publicEndpoint != null && !publicEndpoint.isBlank()) {
+            // Например: http://localhost:9000/news-media/file.jpg
+            publicUrl = String.format("%s/%s/%s", publicEndpoint.replaceAll("/+$", ""), appConfig.s3().bucket(), s3Key);
+        } else {
+            // Относительный путь для работы через Nginx-прокси: /news-media/file.jpg
+            publicUrl = String.format("/%s/%s", appConfig.s3().bucket(), s3Key);
+        }
 
         MediaFileEntity entity = MediaFileEntity.builder()
                 .id(fileId)

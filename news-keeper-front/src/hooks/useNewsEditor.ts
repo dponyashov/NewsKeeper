@@ -1,13 +1,10 @@
 import { useState, useEffect } from "react";
 import { useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import TextAlign from "@tiptap/extension-text-align";
 import Placeholder from "@tiptap/extension-placeholder";
-import { CustomParagraph } from "../extensions/CustomParagraph";
 import { authFetch } from "../utils/api";
 import { type NewsDto } from "../types/news";
 import { API_BASE_URL } from "../config/apiConfig";
+import { getSharedTipTapExtensions } from "../extensions/tiptapExtensions";
 
 interface UseNewsEditorParams {
   editingNewsId: number | null;
@@ -41,13 +38,10 @@ export const useNewsEditor = ({
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ paragraph: false }),
-      CustomParagraph,
-      Image.configure({ HTMLAttributes: { class: "news-inline-image" } }),
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      ...getSharedTipTapExtensions(),
       Placeholder.configure({
         placeholder:
-          "Введите текст новости... Можно вставлять картинки и менять стили абзацев.",
+          "Введите текст новости... Можно вставлять картинки, таблицы и списки.",
       }),
     ],
     editorProps: {

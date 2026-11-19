@@ -11,10 +11,15 @@ spring:
     url: ${DB_NEWS_URL}
     username: ${DB_NEWS_USER}
     password: ${DB_NEWS_PASSWORD}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
   jpa:
     show-sql: true
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         format_sql: true
